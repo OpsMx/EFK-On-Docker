@@ -2,7 +2,9 @@
 Step 1:
 
 Install Docker and Docker Compose, by following the instructions in the below links
+
 https://docs.docker.com/engine/install/ubuntu/
+
 https://docs.docker.com/compose/install/
 
 Step 2:
