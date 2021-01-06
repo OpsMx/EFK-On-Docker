@@ -1,0 +1,11 @@
+Step1 : clone the repository or copy the content of alter_table.py  into a file.
+Step2 : Copy `alter_table.py` inside the autopilot pod.
+     -->  kubectl cp alter_table.py  oes-autopilot-6589468f7b-nt4st:/home/ubuntu/alter_table.py
+Step3:  Go inside the autopilot pod
+     --> kubectl exec -it oes-autopilot-6589468f7b-nt4st /bin/bash
+     
+Step4: Execute the below command inside the pod
+     -->  python3 alter_table.py
+     
+     
+     
