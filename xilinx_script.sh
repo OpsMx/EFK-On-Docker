@@ -4,9 +4,11 @@ REPORTDIR='/home/xilinx/scripts'
 ES_SERVER=https://oeselastic7.opsmx.com
 INDEX_PATTERN='opsmx-*'
 
+#Autopilot urls
 AUTOPILOT_UI='http://20.69.130.245'
 GATE_SERVER='http://20.69.130.234:8084'
 
+#Application Name, Service Name
 application='xilinxtest03'
 serviceName='svc1'
 beginCanaryAnalysisAfterMins=0
