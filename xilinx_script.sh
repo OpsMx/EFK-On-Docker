@@ -1,5 +1,6 @@
 #!/bin/bash
 
+REPORTDIR='/home/xilinx/scripts'
 ES_SERVER=https://oeselastic7.opsmx.com
 INDEX_PATTERN='opsmx-*'
 
@@ -15,6 +16,7 @@ minimumCanaryScore=95
 canaryResultScore=95
 username='admin'
 MAX_TRIGGER='20'
+JOB_HOURS=7
 
 GATE_URL="$GATE_SERVER/autopilot/registerCanary"
 
@@ -23,11 +25,13 @@ usage="$(basename "$0") [-help]
 -- Example to show how to pass relevant arguments.
 
 USAGE:
-$(basename "$0") -basejobid=100 -canaryjobid=221  -testcases=20;
+$(basename "$0") -basejobid=100 -canaryjobid=221  -testcases=20 -basestart=1608196811570 -canarystart=1608198772262;
 
 args:
   -basejobid=<baseline job id>
   -canaryjobid=<New Release job id>
+  -basestart=<Baseline job start time in Epoch format>
+  -canarystart=<Canary job start time in Epoch format>
   -testcases=<Maximum number of test cases. '0' means all>"
 
 
@@ -42,6 +46,14 @@ case $i in
     CANARY_JOB_ID="${i#*=}"
     shift # past argument=value
     ;;
+    -basestart=*)
+    BASE_JOB_START="${i#*=}"
+    shift # past argument=value
+    ;;
+    -canarystart=*)
+    CANARY_JOB_START="${i#*=}"
+    shift # past argument=value
+    ;;
     -testcases=*)
     TRIGGER_COUNT="${i#*=}"
     shift # past argument=value
@@ -52,6 +64,7 @@ case $i in
      ;;
 esac
 done
+
 
 if [[ -z "$BASE_JOB_ID" ]]; then
   echo "Provide Baseline Job Id";
@@ -65,29 +78,58 @@ if [[ -z "$CANARY_JOB_ID" ]]; then
   exit 1;
 fi
 
+if [[ -z "$BASE_JOB_START" ]]; then
+  echo "Provide Baseline Start Time in Epoch";
+  echo "$usage";
+  exit 1;
+fi
+
+if [[ -z "$CANARY_JOB_START" ]]; then
+  echo "Provide Canary Start Time in Epoch";
+  echo "$usage";
+  exit 1;
+fi
+
 TRIGGER_COUNT=${TRIGGER_COUNT:-0}
 
-echo "Canary Job Id => $CANARY_JOB_ID Baseline Job Id => BASE_JOB_ID  No. of Canaries to trigger => $TRIGGER_COUNT";
+BASE_JOB_START=$(echo ${BASE_JOB_START:0:10});
+CANARY_JOB_START=$(echo ${CANARY_JOB_START:0:10});
+
+echo "Canary Job Id => $CANARY_JOB_ID Baseline Job Id => $BASE_JOB_ID Canary Job StartTime => $CANARY_JOB_START Baseline Job StartTime => $BASE_JOB_START  No. of Canaries to trigger => $TRIGGER_COUNT";
 
 ######## function to list unique testcases, have to pass jobid, CANARY_FILES/BASELINE_FILES and ASC/DESC
 function list_files () {
 
   QUERY="{
-    \"size\":1000,
-    \"sort\":[{\"@timestamp\":{\"order\":\"$3\"}}],
-    \"_source\": false,
-    \"query\":{
-      \"match_phrase\":{
-         \"file_name\":\"\/$1\/integration_testing\"
+      \"size\":1000,
+      \"sort\":[{\"@timestamp\":{\"order\":\"$3\"}}],
+      \"_source\":false,
+      \"query\":{
+        \"bool\":{
+          \"must\":[
+            {
+              \"range\":{
+                \"@timestamp\":{
+                  \"gte\":$4,
+                  \"lte\":$5,
+                  \"format\":\"epoch_second\"
+                }
+              }
+            },
+            {
+              \"match_phrase\":{
+                \"file_name\":\"\/$1\/integration_testing\/\"
+              }
+            }
+          ]
+        }
+      },
+      \"collapse\":{
+        \"field\":\"file_name.keyword\"
       }
-    },
-    \"collapse\":{
-       \"field\":\"file_name.keyword\"
-    }
-  }"
+    }"
 
-
-  ES_RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET -d "$QUERY" "$ES_SERVER/$INDEX_PATTERN/_search?pretty");
+  ES_RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET --insecure --user $ES_USER:$ES_PWD  -d "$QUERY" "$ES_SERVER/$INDEX_PATTERN/_search?pretty");
   count=$(jq -r '.hits.total.value' <<< "$ES_RESPONSE");
 
   if [[  "$count" -gt 0 ]]
@@ -150,9 +192,13 @@ function trigger_canary () {
           }
       ]
   }"
- 
-  response=$(curl -sS -k -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL" | jq -r '.canaryId')
-  echo "$response";
+
+  response=$(curl -sS -k -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL");
+  canaryid=$(jq -r '.canaryId' <<< "$response");
+  if [ -z "$canaryid" ] && [ "$canaryid"  = "null" ]; then
+	echo "canaryid --> $canaryid   RESPONSE --> $response"
+  fi
+  echo "$canaryid";
 }
 ###### function to convert epoch seconds to HH:mm:ss format
 function seconds2time ()
@@ -174,22 +220,43 @@ function seconds2time ()
 function check_status () {
   for j in "${!CANARY_IDS[@]}"; do
     CANARY_URL="$GATE_SERVER/autopilot/canaries/getServiceList?canaryId=${CANARY_IDS[$j]}"
-    RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET $CANARY_URL );
-    STATUS=$(jq -r '.services[0].status' <<< "$RESPONSE");
-
-    if [ "$STATUS" != "InProgress" ] && [ "$STATUS" != "null" ]; then
+    RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARY_IDS[$j]}" );
+    STATUS=$(jq -r '.services[0].healthStatus' <<< "$RESPONSE");
+  
+    if [ "$STATUS" != "InProgress" ] && [ "$STATUS" != "null" ] && [ ! -z "$STATUS" ]; then
       echo "CanaryId => ${CANARY_IDS[$j]}  Result => $STATUS";
       ((loopcount=loopcount-1))
       
-      totalTime=$(((${DESC_CANARY_FILES[$j]}/1000) - (${ASC_CANARY_FILES[$j]}/1000)));
+      local CanaryTime=$(((${DESC_CANARY_FILES[$j]}/1000) - (${ASC_CANARY_FILES[$j]}/1000)));
+      local basefile=${j///$CANARY_JOB_ID//$BASE_JOB_ID};
+      local basestarttime=${ASC_BASELINE_FILES[$basefile]};
+      if [ ! -z "$basestarttime" ]; then
+	 BaselineTime=$(((${DESC_BASELINE_FILES[$basefile]}/1000) - (${ASC_BASELINE_FILES[$basefile]}/1000)));
+      fi
+
       UI_URL="$AUTOPILOT_UI/application/deploymentverification/$application/${CANARY_IDS[$j]}"
-      HTML_TABLE+="<tr class=\"skippedodd\">
-                      <td>${j##*/}</td>
-              				<td> ${j#/$CANARY_JOB_ID}</td>
-                      <td style=\"text-align:center;\">$STATUS</td>
-		                  <td style=\"text-align:center;\">`seconds2time $totalTime`</td>
-		                  <td><a href=$UI_URL>$UI_URL</a></td>
-                    </tr>";
+      TEST_CASE=${j#/$CANARY_JOB_ID};
+      if [[ "$TEST_CASE" == *lnx64.OUTPUT ]]; then
+	      LIN_HTML_TABLE+="<tr class=\"skippedodd\">
+                       <td>$TEST_CASE</td>
+                       <td style=\"text-align:center;\">$STATUS</td>
+                       <td style=\"text-align:center;\">`seconds2time $CanaryTime`</td>
+		       <td style=\"text-align:center;\">`seconds2time $BaselineTime`</td>
+		       <td>$(jq -r '.services[0].failureCause' <<< "$RESPONSE")</td>
+		       <td>$(jq -r '.services[0].failureCauseComment' <<< "$RESPONSE")</td>
+                       <td><a href=$UI_URL>$UI_URL</a></td>
+                       </tr>";
+      else
+	      WIN_HTML_TABLE+="<tr class=\"skippedodd\">
+                       <td>$TEST_CASE</td>
+                       <td style=\"text-align:center;\">$STATUS</td>
+                       <td style=\"text-align:center;\">`seconds2time $CanaryTime`</td>
+		       <td style=\"text-align:center;\">`seconds2time $BaselineTime`</td>
+		       <td>$(jq -r '.services[0].failureCause' <<< "$RESPONSE")</td>
+		       <td>$(jq -r '.services[0].failureCauseComment' <<< "$RESPONSE")</td>
+                       <td><a href=$UI_URL>$UI_URL</a></td>
+                       </tr>";
+      fi
 
       unset CANARY_IDS[$j];
     fi
@@ -203,22 +270,22 @@ declare -A DESC_CANARY_FILES;
 declare -A DESC_BASELINE_FILES;
 
 
-list_files "$CANARY_JOB_ID" "CANARY_FILES" "ASC";
+list_files "$CANARY_JOB_ID" "CANARY_FILES" "ASC" "$CANARY_JOB_START" "$((CANARY_JOB_START + (JOB_HOURS * 3600)))";
 if [ ${#ASC_CANARY_FILES[@]} -eq 0 ]; then
   echo "No data found in elasticsearch. Please provide valid canary job id";
   exit 1;
 fi
 echo "Retrieving Canary test cases completed"
 
-list_files "$BASE_JOB_ID" "BASELINE_FILES" "ASC";
+list_files "$BASE_JOB_ID" "BASELINE_FILES" "ASC" "$BASE_JOB_START" "$((BASE_JOB_START + (JOB_HOURS * 3600)))";
 if [ ${#ASC_BASELINE_FILES[@]} -eq 0 ]; then
   echo "No data found in elasticsearch. Please provide valid baseline job id";
   exit 1;
 fi
 echo "Retrieving Baseline test cases completed"
 
-list_files "$CANARY_JOB_ID" "CANARY_FILES" "DESC";
-list_files "$BASE_JOB_ID" "BASELINE_FILES" "DESC";
+list_files "$CANARY_JOB_ID" "CANARY_FILES" "DESC" "$CANARY_JOB_START" "$((CANARY_JOB_START + (JOB_HOURS * 3600)))";
+list_files "$BASE_JOB_ID" "BASELINE_FILES" "DESC" "$BASE_JOB_START" "$((BASE_JOB_START + (JOB_HOURS * 3600)))";
 
 
 filecount=0;
@@ -263,18 +330,6 @@ for i in "${!ASC_CANARY_FILES[@]}"; do
    #########
    canaryid=`trigger_canary "$BASEFILE" "$BASE_STARTTIME" "$i" "$CANARY_STARTTIME" "$E_TIME" "$lifetimeHours"`;
    echo "canaryId ==> $canaryid  test_case => $i"
-   retry=0;
-   if [ "$canaryid" = "null" ]; then
-     while [ $retry -le 3 ]
-      do
-          canaryid=`trigger_canary "$BASEFILE" "$BASE_STARTTIME" "$i" "$CANARY_STARTTIME" "$E_TIME" "$lifetimeHours"`;
-          if [ ! -z "$canaryid" ] && [ "$canaryid"  != "null" ]; then
-            echo "canaryId ==> $canaryid  test_case => $i"
-            break;
-          fi
-          ((retry++));
-     done
-   fi
    
 
    if [ ! -z "$canaryid" ] && [ "$canaryid"  != "null" ]; then
@@ -360,25 +415,44 @@ resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.
 	</style>
 	</head>
 	<body>
-	<h2>JENKINS BUILD NUMBER: $CANARY_JOB_ID</h2>
+	<h2 style=\"text-align:center;\">NEW JOB NUMBER: $CANARY_JOB_ID &emsp; BASELINE JOB NUMBER: $BASE_JOB_ID</h2>
+	<h3>Environment: Linux</h3>
 	<table id='summary'>
 		<thead>
 			<tr>
-				<th>TEST CASE</th>
-				<th>PATH</th>
-				<th style=\"width:100px;\">RESULT</th>
-				<th style=\"width:100px;\">Test Execution Time</th>
-				<th>Autopilot Analysis url</th>
+				<th>Test Cases</th>
+                                <th style=\"width:100px;\">Result</th>
+                                <th style=\"width:100px;\">New Execution Time</th>
+                                <th style=\"width:100px;\">Baseline Execution Time</th>
+                                <th style=\"width:100px;\">Error Tag</th>
+				<th style=\"width:200px;\">Error Tag Comments</th>
+                                <th>Autopilot Analysis url</th>
 			</tr>
 		</thead>
 		<tbody id=\"t0\">
-		   $HTML_TABLE
+		   $LIN_HTML_TABLE
 		</tbody>
 	</table>
+	<h3>Environment: Windows</h3>
+	<table id='summary'>
+                <thead>
+                        <tr>
+                                <th>Test Cases</th>
+                                <th style=\"width:100px;\">Result</th>
+                                <th style=\"width:100px;\">New Execution Time</th>
+				<th style=\"width:100px;\">Baseline Execution Time</th>
+				<th style=\"width:100px;\">Error Tag</th>
+				<th style=\"width:200px;\">Error Tag Comment</th>
+                                <th>Autopilot Analysis url</th>
+                        </tr>
+                </thead>
+                <tbody id=\"t0\">
+                   $WIN_HTML_TABLE
+                </tbody>
 	</body>
 	</html>"
 
-
-echo "$resultFile" > $(echo "$PWD/${BASE_JOB_ID}_${CANARY_JOB_ID}_result.html");
+mkdir -p $REPORTDIR
+echo "$resultFile" > $(echo "$REPORTDIR/${BASE_JOB_ID}_${CANARY_JOB_ID}_result.html");
 
 echo "Analysis Completed";
