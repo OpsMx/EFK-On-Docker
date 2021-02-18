@@ -15,8 +15,9 @@ beginCanaryAnalysisAfterMins=0
 minimumCanaryScore=95
 canaryResultScore=95
 username='admin'
-MAX_TRIGGER='20'
+MAX_TRIGGER='10'
 JOB_HOURS=7
+TERMINATE_MINS=20
 
 GATE_URL="$GATE_SERVER/autopilot/registerCanary"
 
@@ -219,11 +220,11 @@ function seconds2time ()
 ### function to check canary analysis status of canary ids present in array and remove canaryid from array if analysis done.
 function check_status () {
   for j in "${!CANARY_IDS[@]}"; do
-    CANARY_URL="$GATE_SERVER/autopilot/canaries/getServiceList?canaryId=${CANARY_IDS[$j]}"
-    RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARY_IDS[$j]}" );
+    CANARYID=${CANARY_IDS[$j]};
+    RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARYID}" );
     STATUS=$(jq -r '.services[0].healthStatus' <<< "$RESPONSE");
   
-    if [ "$STATUS" != "InProgress" ] && [ "$STATUS" != "null" ] && [ ! -z "$STATUS" ]; then
+    if [ "$STATUS" != "InProgress" ] && [ "$STATUS" != "Running" ] && [ "$STATUS" != "null" ] && [ ! -z "$STATUS" ]; then
       echo "CanaryId => ${CANARY_IDS[$j]}  Result => $STATUS";
       ((loopcount=loopcount-1))
       
@@ -234,7 +235,7 @@ function check_status () {
 	 BaselineTime=$(((${DESC_BASELINE_FILES[$basefile]}/1000) - (${ASC_BASELINE_FILES[$basefile]}/1000)));
       fi
 
-      UI_URL="$AUTOPILOT_UI/application/deploymentverification/$application/${CANARY_IDS[$j]}"
+      UI_URL="$AUTOPILOT_UI/application/deploymentverification/$application/${CANARYID}"
       TEST_CASE=${j#/$CANARY_JOB_ID};
       if [[ "$TEST_CASE" == *lnx64.OUTPUT ]]; then
 	      LIN_HTML_TABLE+="<tr class=\"skippedodd\">
@@ -257,8 +258,15 @@ function check_status () {
                        <td><a href=$UI_URL>$UI_URL</a></td>
                        </tr>";
       fi
-
+      unset CANARY_TRIGTIME[${CANARYID}];
       unset CANARY_IDS[$j];
+    else
+      if [[ $(($(date -u +%s) -  ${CANARY_TRIGTIME[${CANARYID}]}))  -gt $((TERMINATE_MINS * 60)) ]]; then
+         curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/cancelRunningCanary?id=${CANARYID}" -o /dev/null
+	 unset CANARY_TRIGTIME[${CANARYID}];
+         unset CANARY_IDS[$j];
+	 ((loopcount=loopcount-1))
+       fi
     fi
   done
 }
@@ -292,6 +300,7 @@ filecount=0;
 TOTAL_FILES=${#ASC_CANARY_FILES[@]};
 loopcount=0
 declare -A CANARY_IDS;
+declare -A CANARY_TRIGTIME;
 
 echo "Analysis STARTED #########"
 date -u +"%Y-%m-%dT%T.%S%:z"
@@ -331,9 +340,9 @@ for i in "${!ASC_CANARY_FILES[@]}"; do
    canaryid=`trigger_canary "$BASEFILE" "$BASE_STARTTIME" "$i" "$CANARY_STARTTIME" "$E_TIME" "$lifetimeHours"`;
    echo "canaryId ==> $canaryid  test_case => $i"
    
-
    if [ ! -z "$canaryid" ] && [ "$canaryid"  != "null" ]; then
     CANARY_IDS[$i]=$canaryid;
+    CANARY_TRIGTIME[$canaryid]=$(date -u +%s);
     ((loopcount=loopcount+1))
    fi
 
