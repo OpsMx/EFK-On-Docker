@@ -159,7 +159,6 @@ function trigger_canary () {
       \"canaryConfig\": {
           \"canaryAnalysisConfig\": {
               \"beginCanaryAnalysisAfterMins\": \"$beginCanaryAnalysisAfterMins\",
-              \"canaryAnalysisIntervalMins\": \"$5\",
               \"notificationHours\": []
           },
           \"canaryHealthCheckHandler\": {
@@ -169,7 +168,7 @@ function trigger_canary () {
               \"canaryResultScore\": \"$canaryResultScore\"
           },
           \"combinedCanaryResultStrategy\": \"AGGREGATE\",
-          \"lifetimeHours\": \"$6\",
+          \"lifetimeMinutes\": $5,
           \"name\": \"$username\"
       },
       \"canaryDeployments\": [
@@ -220,6 +219,7 @@ function seconds2time ()
 ### function to check canary analysis status of canary ids present in array and remove canaryid from array if analysis done.
 function check_status () {
   for j in "${!CANARY_IDS[@]}"; do
+    sleep 0.1
     CANARYID=${CANARY_IDS[$j]};
     RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARYID}" );
     STATUS=$(jq -r '.services[0].healthStatus' <<< "$RESPONSE");
@@ -262,6 +262,7 @@ function check_status () {
       unset CANARY_IDS[$j];
     else
       if [[ $(($(date -u +%s) -  ${CANARY_TRIGTIME[${CANARYID}]}))  -gt $((TERMINATE_MINS * 60)) ]]; then
+	 echo "terminating the analysis ${CANARYID}"
          curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/cancelRunningCanary?id=${CANARYID}" -o /dev/null
 	 unset CANARY_TRIGTIME[${CANARYID}];
          unset CANARY_IDS[$j];
@@ -320,24 +321,19 @@ for i in "${!ASC_CANARY_FILES[@]}"; do
      BASE_STARTTIME=$CANARY_STARTTIME;
    fi
    
-   if [[ $bTime > $cTime ]]; then
+   if [[ $bTime -gt $cTime ]]; then
       E_TIME=$bTime;
    else
       E_TIME=$cTime;
    fi
-   
-   E_TIME=$(( (E_TIME + 59) / 60 ))
-   if [[ (($E_TIME < 1)) ]]; then
-        E_TIME=1
-   fi
 
-   lifetimeHours=$(echo "scale=2;$E_TIME/60"|bc)
-   if ((  $(echo "$lifetimeHours<0.02"|bc ))); then
-         lifetimeHours=0.02
-   fi 
+   E_TIME=$(( (E_TIME + 59) / 60 ))
+   if [[ (($E_TIME -lt 2)) ]]; then
+        E_TIME=2
+   fi
    
    #########
-   canaryid=`trigger_canary "$BASEFILE" "$BASE_STARTTIME" "$i" "$CANARY_STARTTIME" "$E_TIME" "$lifetimeHours"`;
+   canaryid=`trigger_canary "$BASEFILE" "$BASE_STARTTIME" "$i" "$CANARY_STARTTIME" "$E_TIME"`;
    echo "canaryId ==> $canaryid  test_case => $i"
    
    if [ ! -z "$canaryid" ] && [ "$canaryid"  != "null" ]; then
