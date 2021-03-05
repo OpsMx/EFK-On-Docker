@@ -193,6 +193,7 @@ function trigger_canary () {
       ]
   }"
   response=$(curl -sS -k --retry 3 --retry-connrefused --retry-delay 240 -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL" || true);
+  canaryid='null';
   if [[ $response == *"canaryId"* ]]; then
     canaryid=$(jq -r '.canaryId' <<< "$response");
   fi
@@ -221,6 +222,7 @@ function check_status () {
     sleep 0.1
     CANARYID=${CANARY_IDS[$j]};
     RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARYID}" || true);
+    STATUS='null';
     if [[ $RESPONSE == *"services"* ]]; then
       STATUS=$(jq -r '.services[0].healthStatus' <<< "$RESPONSE");
     fi
