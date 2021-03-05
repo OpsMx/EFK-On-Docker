@@ -192,12 +192,11 @@ function trigger_canary () {
           }
       ]
   }"
-
-  response=$(curl -sS -k -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL");
-  canaryid=$(jq -r '.canaryId' <<< "$response");
-  if [ -z "$canaryid" ] && [ "$canaryid"  = "null" ]; then
-	echo "canaryid --> $canaryid   RESPONSE --> $response"
+  response=$(curl -sS -k --retry 3 --retry-connrefused --retry-delay 5 -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL" || true);
+  if [[ $response == *"canaryId"* ]]; then
+    canaryid=$(jq -r '.canaryId' <<< "$response");
   fi
+
   echo "$canaryid";
 }
 ###### function to convert epoch seconds to HH:mm:ss format
@@ -221,8 +220,10 @@ function check_status () {
   for j in "${!CANARY_IDS[@]}"; do
     sleep 0.1
     CANARYID=${CANARY_IDS[$j]};
-    RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARYID}" );
-    STATUS=$(jq -r '.services[0].healthStatus' <<< "$RESPONSE");
+    RESPONSE=$(curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/${CANARYID}" || true);
+    if [[ $RESPONSE == *"services"* ]]; then
+      STATUS=$(jq -r '.services[0].healthStatus' <<< "$RESPONSE");
+    fi
   
     if [ "$STATUS" != "InProgress" ] && [ "$STATUS" != "Running" ] && [ "$STATUS" != "null" ] && [ ! -z "$STATUS" ]; then
       echo "CanaryId => ${CANARY_IDS[$j]}  Result => $STATUS";
@@ -263,7 +264,7 @@ function check_status () {
     else
       if [[ $(($(date -u +%s) -  ${CANARY_TRIGTIME[${CANARYID}]}))  -gt $((TERMINATE_MINS * 60)) ]]; then
 	 echo "terminating the analysis ${CANARYID}"
-         curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/cancelRunningCanary?id=${CANARYID}" -o /dev/null
+	 curl -sS -k -H  "Content-Type:application/json"  -X GET "$GATE_SERVER/autopilot/canaries/cancelRunningCanary?id=${CANARYID}" > /dev/null;
 	 unset CANARY_TRIGTIME[${CANARYID}];
          unset CANARY_IDS[$j];
 	 ((loopcount=loopcount-1))
@@ -333,6 +334,8 @@ for i in "${!ASC_CANARY_FILES[@]}"; do
    fi
    
    #########
+   ((filecount=filecount+1))
+
    canaryid=`trigger_canary "$BASEFILE" "$BASE_STARTTIME" "$i" "$CANARY_STARTTIME" "$E_TIME"`;
    echo "canaryId ==> $canaryid  test_case => $i"
    
@@ -342,7 +345,6 @@ for i in "${!ASC_CANARY_FILES[@]}"; do
     ((loopcount=loopcount+1))
    fi
 
-   ((filecount=filecount+1))
    if [ $TRIGGER_COUNT > 0 ] && [ "$TRIGGER_COUNT" -eq "$filecount" ] ; then
          filecount=$TOTAL_FILES;
    fi
