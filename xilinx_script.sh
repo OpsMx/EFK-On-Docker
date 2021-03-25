@@ -21,6 +21,9 @@ TERMINATE_MINS=20
 
 GATE_URL="$GATE_SERVER/autopilot/registerCanary"
 
+### PLEASE REPLACE DESIRED ARTIFATORY URL
+ARTIFACTORY_URL='https://artifactory/artifactory/api/build/sw_integration_test::2021.1.0::linux';
+
 usage="$(basename "$0") [-help]
 
 -- Example to show how to pass relevant arguments.
@@ -374,6 +377,45 @@ echo "Analysis COMPLETED #########"
 date -u +"%Y-%m-%dT%T.%S%:z"
 echo "#########"
 
+IFS="," read -a components_list <<< $COMPONENTS
+
+curl -k $ARTIFACTORY_URL/$CANARY_JOB_ID > /tmp/newrelease_info.json
+curl -k $ARTIFACTORY_URL/$BASE_JOB_ID > /tmp/baseline_info.json
+
+if [ -s  /tmp/newrelease_info.json ] && [ -s /tmp/baseline_info.json ]; then
+
+  for i in "${!components_list[@]}"; do
+     CANARY_COMPONENT=$(cat /tmp/newrelease_info.json | grep -oP '(?<='${components_list[$i]}'" : ").*?(?=")')
+     BASELINE_COMPONENT=$(cat /tmp/baseline_info.json | grep -oP '(?<='${components_list[$i]}'" : ").*?(?=")')
+  
+     if [ ! -z "$CANARY_COMPONENT" ] && [ ! -z "$BASELINE_COMPONENT" ]; then
+        if [ $CANARY_COMPONENT != $BASELINE_COMPONENT ]; then
+            COMPONENT_CHANGED+="<tr class=\"skippedodd\">
+                            <td>$BASELINE_COMPONENT</td>
+                            <td>$CANARY_COMPONENT</td>
+                            </tr>";
+        fi
+     elif [ ! -z "$BASELINE_COMPONENT" ] && [ -z "$CANARY_COMPONENT" ]; then
+        COMPONENT_CHANGED+="<tr class=\"skippedodd\">
+                            <td>$BASELINE_COMPONENT</td>
+                            <td>$CANARY_COMPONENT</td>
+                            </tr>";
+     elif [ -z "$BASELINE_COMPONENT" ] && [ ! -z "$CANARY_COMPONENT" ]; then
+           COMPONENT_CHANGED+="<tr class=\"skippedodd\">
+                            <td>$BASELINE_COMPONENT</td>
+                            <td>$CANARY_COMPONENT</td>
+                            </tr>";
+     fi
+  done
+fi
+
+if [ ${#COMPONENT_CHANGED[@]} -eq 0 ]; then
+    COMPONENT_CHANGED+="<tr class=\"skippedodd\" height=\"35px\">
+                            <td></td>
+                            <td></td>
+                            </tr>";
+fi
+
 resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">
 	<html xmlns=\"http://www.w3.org/1999/xhtml\">
 	<head>
@@ -425,6 +467,19 @@ resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.
 	</head>
 	<body>
 	<h2 style=\"text-align:center;\">NEW JOB NUMBER: $CANARY_JOB_ID &emsp; BASELINE JOB NUMBER: $BASE_JOB_ID</h2>
+        <h3>Components Changed</h3>
+	<table id='summary'>
+                <thead>
+                        <tr>
+                                <th>Baseline Versions</th>
+                                <th>New Release Versions</th>
+                        </tr>
+                </thead>
+                <tbody id=\"t0\">
+                   $COMPONENT_CHANGED
+                </tbody>
+        </table>
+
 	<h3>Environment: Linux</h3>
 	<table id='summary'>
 		<thead>
