@@ -19,10 +19,10 @@ MAX_TRIGGER='10'
 JOB_HOURS=7
 TERMINATE_MINS=20
 
+GATE_URL="$GATE_SERVER/autopilot/registerCanary"
+
 ### PLEASE REPLACE DESIRED ARTIFATORY URL
 ARTIFACTORY_URL='https://artifactory/artifactory/api/build/sw_integration_test::2021.1.0::linux';
-
-GATE_URL="$GATE_SERVER/autopilot/registerCanary"
 
 usage="$(basename "$0") [-help]
 
@@ -195,7 +195,7 @@ function trigger_canary () {
           }
       ]
   }"
-  response=$(curl -sS -k --retry 3 --retry-connrefused --retry-delay 5 -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL" || true);
+  response=$(curl -sS -k --retry 3 --retry-connrefused --retry-delay 240 -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL" || true);
   canaryid='null';
   if [[ $response == *"canaryId"* ]]; then
     canaryid=$(jq -r '.canaryId' <<< "$response");
