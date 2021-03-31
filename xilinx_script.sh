@@ -196,7 +196,7 @@ function trigger_canary () {
       ]
   }"
   response=$(curl -sS -k --retry 3 --retry-connrefused --retry-delay 240 -H  "Content-Type:application/json"  -X POST -d "$jsondata" "$GATE_URL" || true);
-  canaryid='null';
+  canaryid='';
   if [[ $response == *"canaryId"* ]]; then
     canaryid=$(jq -r '.canaryId' <<< "$response");
   fi
@@ -377,44 +377,132 @@ echo "Analysis COMPLETED #########"
 date -u +"%Y-%m-%dT%T.%S%:z"
 echo "#########"
 
+#---------------------------------------------------------------------------------------------------------------
+
+declare -A CANARYDEPENDENCY;
+declare -A BASEDEPENDENCY;
+
 IFS="," read -a components_list <<< $COMPONENTS
 
 curl -k $ARTIFACTORY_URL/$CANARY_JOB_ID > /tmp/newrelease_info.json
 curl -k $ARTIFACTORY_URL/$BASE_JOB_ID > /tmp/baseline_info.json
 
-if [ -s  /tmp/newrelease_info.json ] && [ -s /tmp/baseline_info.json ]; then
 
-  for i in "${!components_list[@]}"; do
-     CANARY_COMPONENT=$(cat /tmp/newrelease_info.json | grep -oP '(?<='${components_list[$i]}'" : ").*?(?=")')
-     BASELINE_COMPONENT=$(cat /tmp/baseline_info.json | grep -oP '(?<='${components_list[$i]}'" : ").*?(?=")')
-  
-     if [ ! -z "$CANARY_COMPONENT" ] && [ ! -z "$BASELINE_COMPONENT" ]; then
-        if [ $CANARY_COMPONENT != $BASELINE_COMPONENT ]; then
-            COMPONENT_CHANGED+="<tr class=\"skippedodd\">
-                            <td>$BASELINE_COMPONENT</td>
-                            <td>$CANARY_COMPONENT</td>
-                            </tr>";
+for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/newrelease_info.json ); do
+     value=$(jq -r ".buildInfo.properties.$k" /tmp/newrelease_info.json );
+     CANARYDEPENDENCY[$k]=$value
+done
+
+
+for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/baseline_info.json ); do
+    value=$(jq -r ".buildInfo.properties.$k" /tmp/baseline_info.json );
+    BASEDEPENDENCY[$k]=$value
+done
+
+TOTAL_COMPONENTS=${#components_list[@]};
+for k in "${!components_list[@]}"; do
+	components_regex+=$(echo "*${components_list[$k]}\"");
+	if [[ $k -lt $TOTAL_COMPONENTS-1 ]] ; then
+		components_regex+='|'
+	fi
+done
+
+for j in "${!CANARYDEPENDENCY[@]}"; do
+    BASE_VALUE=${BASEDEPENDENCY[$j]};
+    if [[ $j == *'Version"' ]]; then
+       if [ ! -z "${CANARYDEPENDENCY[$j]}" ] && [ ! -z "$BASE_VALUE" ]; then
+          if [ ${CANARYDEPENDENCY[$j]} != $BASE_VALUE ]; then
+             CANARY_VERSION_COMPARE+=$j="<p style=\"background-color:yellow;display:inline\">${CANARYDEPENDENCY[$j]} </p>,";
+             BASE_VERSION_COMPARE+=$j="<p style=\"display:inline\">$BASE_VALUE </p>,";
+          else
+             CANARY_VERSION_COMPARE+="<p style=\"display:inline\">$j=${CANARYDEPENDENCY[$j]} </p>,";
+             BASE_VERSION_COMPARE+="<p style=\"display:inline\">$j=$BASE_VALUE </p>,";
+          fi      
+       elif [ ! -z "${CANARYDEPENDENCY[$j]}" ] && [ -z "$BASE_VALUE" ]; then
+           CANARY_VERSION_COMPARE+="<p style=\"background-color:yellow;display:inline\">$j=${CANARYDEPENDENCY[$j]} </p>,";
+       fi
+    fi
+    
+    if [[ ${CANARYDEPENDENCY[$j]} == "com.xilinx"* ]] && [[ ! $j == *'Deparray"' ]] && [[ ! $j == +($components_regex)  ]] ; then
+
+        IFS="," read -a canaryMultiComponents <<< ${CANARYDEPENDENCY[$j]}
+        IFS="," read -a baseMultiComponents <<< $BASE_VALUE
+
+        COMMON_ALL=$(comm -12 <(printf '%s\n' "${canaryMultiComponents[@]}" | sort -u) <(printf '%s\n' "${baseMultiComponents[@]}" | sort -u) | tr '\n' ' ')
+        DIFF_ALL=$(echo ${canaryMultiComponents[@]} ${baseMultiComponents[@]} | tr ' ' '\n' | sort | uniq -u | tr '\n' ' ');
+        canary_diff=$(echo ${canaryMultiComponents[@]} ${DIFF_ALL[@]} | tr ' ' '\n' | sort | uniq -D | uniq | tr '\n' ' ');
+        baseline_diff=$(echo ${baseMultiComponents[@]} ${DIFF_ALL[@]} | tr ' ' '\n' | sort | uniq -D | uniq | tr '\n' ' ');
+        
+        for i in "${!COMMON_ALL[@]}"; do
+           canary_modules_diff+=${COMMON_ALL[$i]}
+           baseline_modules_diff+=${COMMON_ALL[$i]}
+        done
+
+        if [ ${#canary_diff[@]} -gt 0 ] || [ ${#baseline_diff[@]} -gt 0 ]; then
+           for i in "${!canary_diff[@]}"; do
+               canary_modules_diff+="<p style=\"background-color:yellow;display:inline\">${canary_diff[$i]}</p>,"
+           done
+           for i in "${!baseline_diff[@]}"; do
+               baseline_modules_diff+="<p style=\"display:inline\">${baseline_diff[$i]}</p>,"
+           done
+           
+
+           BASE_CHANGED_MODULES+="$j= $baseline_modules_diff"
+           CANARY_CHNAGED_MODULES+="$j= $canary_modules_diff"
+
         fi
-     elif [ ! -z "$BASELINE_COMPONENT" ] && [ -z "$CANARY_COMPONENT" ]; then
-        COMPONENT_CHANGED+="<tr class=\"skippedodd\">
-                            <td>$BASELINE_COMPONENT</td>
-                            <td>$CANARY_COMPONENT</td>
-                            </tr>";
-     elif [ -z "$BASELINE_COMPONENT" ] && [ ! -z "$CANARY_COMPONENT" ]; then
-           COMPONENT_CHANGED+="<tr class=\"skippedodd\">
-                            <td>$BASELINE_COMPONENT</td>
-                            <td>$CANARY_COMPONENT</td>
-                            </tr>";
-     fi
-  done
-fi
 
-if [ ${#COMPONENT_CHANGED[@]} -eq 0 ]; then
-    COMPONENT_CHANGED+="<tr class=\"skippedodd\" height=\"35px\">
-                            <td></td>
-                            <td></td>
-                            </tr>";
-fi
+        canary_modules_diff='';
+        baseline_modules_diff='';
+    fi
+done
+
+for j in "${!BASEDEPENDENCY[@]}"; do
+    CANARY_VALUE=${CANARYDEPENDENCY[$j]};
+    if [[ $j == *'Version"' ]]; then      
+       if [ ! -z "${BASEDEPENDENCY[$j]}" ] && [ -z "$CANARY_VALUE" ]; then
+           BASE_VERSION_COMPARE+="<p style=\"background-color:yellow;display:inline\">$j=${BASEDEPENDENCY[$j]} </p>,";
+       fi
+    fi
+
+    if [[ ${BASEDEPENDENCY[$j]} == "com.xilinx"* ]] && [[ ! $j == *'Deparray"' ]] && [[ -z "$CANARY_VALUE" ]] && [[ ! $j == +($components_regex)  ]]; then
+
+
+        IFS="," read -a baseMultiComponents <<< ${BASEDEPENDENCY[$j]}
+        IFS="," read -a canaryMultiComponents <<< $CANARY_VALUE
+
+        DIFF_ALL=$(echo ${canaryMultiComponents[@]} ${baseMultiComponents[@]} | tr ' ' '\n' | sort | uniq -u | tr '\n' ' ');
+        baseline_diff=$(echo ${baseMultiComponents[@]} ${DIFF_ALL[@]} | tr ' ' '\n' | sort | uniq -D | uniq | tr '\n' ' ');
+
+        if [ ${#baseline_diff[@]} -gt 0 ]; then
+           for i in "${!baseline_diff[@]}"; do
+               baseline_modules_diff+="<p style=\"background-color:yellow;display:inline\">${baseline_diff[$i]}</p>,"
+           done
+
+           BASE_CHANGED_MODULES+="$j= $baseline_modules_diff"
+        fi
+        baseline_modules_diff='';
+    fi
+done
+
+  BASE_CHANGED_MODULES=${BASE_CHANGED_MODULES:0:-1};
+  CANARY_CHNAGED_MODULES=${CANARY_CHNAGED_MODULES:0:-1};
+  BASE_VERSION_COMPARE=${BASE_VERSION_COMPARE:0:-1};
+  CANARY_VERSION_COMPARE=${CANARY_VERSION_COMPARE:0:-1};
+
+COMPONENT_CHANGED+="<tr class=\"skippedodd\">
+                      <td>$BASE_VERSION_COMPARE</td>
+                      <td>$CANARY_VERSION_COMPARE</td>
+                    </tr>";
+
+MODULE_CHANGED+="<tr class=\"skippedodd\">
+                      <td>$BASE_CHANGED_MODULES</td>
+                      <td>$CANARY_CHNAGED_MODULES</td>
+                    </tr>";
+
+
+
+#---------------------------------------------------------------------------
 
 resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">
 	<html xmlns=\"http://www.w3.org/1999/xhtml\">
@@ -467,16 +555,29 @@ resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.
 	</head>
 	<body>
 	<h2 style=\"text-align:center;\">NEW JOB NUMBER: $CANARY_JOB_ID &emsp; BASELINE JOB NUMBER: $BASE_JOB_ID</h2>
-        <h3>Components Changed</h3>
+        <h3>Component Dependencies</h3>
 	<table id='summary'>
                 <thead>
                         <tr>
-                                <th>Baseline Versions</th>
-                                <th>New Release Versions</th>
+                                <th>Baseline</th>
+                                <th>New Build</th>
                         </tr>
                 </thead>
                 <tbody id=\"t0\">
                    $COMPONENT_CHANGED
+                </tbody>
+        </table>
+
+	<h3>Transitive Dependencies</h3>
+        <table id='summary'>
+                <thead>
+                        <tr>
+                                <th>Baseline</th>
+                                <th>New Build</th>
+                        </tr>
+                </thead>
+                <tbody id=\"t0\">
+                   $MODULE_CHANGED
                 </tbody>
         </table>
 
