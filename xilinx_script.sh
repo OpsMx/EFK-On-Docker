@@ -388,7 +388,7 @@ curl -k $ARTIFACTORY_URL/$CANARY_JOB_ID > /tmp/newrelease_info.json
 curl -k $ARTIFACTORY_URL/$BASE_JOB_ID > /tmp/baseline_info.json
 
 
-for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/newrelease_info.json); do
+for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/newrelease_info.json ); do
      value=$(jq -r ".buildInfo.properties.$k" /tmp/newrelease_info.json );
      CANARYDEPENDENCY[$k]=$value
 done
@@ -399,6 +399,13 @@ for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/baseline_info.json ); do
     BASEDEPENDENCY[$k]=$value
 done
 
+TOTAL_COMPONENTS=${#components_list[@]};
+for k in "${!components_list[@]}"; do
+	components_regex+=$(echo "*${components_list[$k]}\"");
+	if [[ $k -lt $TOTAL_COMPONENTS-1 ]] ; then
+		components_regex+='|'
+	fi
+done
 
 for j in "${!CANARYDEPENDENCY[@]}"; do
     BASE_VALUE=${BASEDEPENDENCY[$j]};
@@ -416,7 +423,7 @@ for j in "${!CANARYDEPENDENCY[@]}"; do
        fi
     fi
     
-    if [[ ${CANARYDEPENDENCY[$j]} == "com.xilinx"* ]] && [[ ! $j == *'Deparray"' ]] ; then
+    if [[ ${CANARYDEPENDENCY[$j]} == "com.xilinx"* ]] && [[ ! $j == *'Deparray"' ]] && [[ ! $j == +($components_regex)  ]] ; then
 
         IFS="," read -a canaryMultiComponents <<< ${CANARYDEPENDENCY[$j]}
         IFS="," read -a baseMultiComponents <<< $BASE_VALUE
@@ -458,7 +465,7 @@ for j in "${!BASEDEPENDENCY[@]}"; do
        fi
     fi
 
-    if [[ ${BASEDEPENDENCY[$j]} == "com.xilinx"* ]] && [[ ! $j == *'Deparray"' ]] && [[ -z "$CANARY_VALUE" ]]; then
+    if [[ ${BASEDEPENDENCY[$j]} == "com.xilinx"* ]] && [[ ! $j == *'Deparray"' ]] && [[ -z "$CANARY_VALUE" ]] && [[ ! $j == +($components_regex)  ]]; then
 
 
         IFS="," read -a baseMultiComponents <<< ${BASEDEPENDENCY[$j]}
@@ -548,7 +555,7 @@ resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.
 	</head>
 	<body>
 	<h2 style=\"text-align:center;\">NEW JOB NUMBER: $CANARY_JOB_ID &emsp; BASELINE JOB NUMBER: $BASE_JOB_ID</h2>
-        <h3>Components</h3>
+        <h3>Component Dependencies</h3>
 	<table id='summary'>
                 <thead>
                         <tr>
@@ -558,6 +565,18 @@ resultFile="<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.
                 </thead>
                 <tbody id=\"t0\">
                    $COMPONENT_CHANGED
+                </tbody>
+        </table>
+
+	<h3>Transitive Dependencies</h3>
+        <table id='summary'>
+                <thead>
+                        <tr>
+                                <th>Baseline</th>
+                                <th>New Build</th>
+                        </tr>
+                </thead>
+                <tbody id=\"t0\">
                    $MODULE_CHANGED
                 </tbody>
         </table>
