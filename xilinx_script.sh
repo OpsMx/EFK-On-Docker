@@ -388,14 +388,14 @@ curl -k $ARTIFACTORY_URL/$CANARY_JOB_ID > /tmp/newrelease_info.json
 curl -k $ARTIFACTORY_URL/$BASE_JOB_ID > /tmp/baseline_info.json
 
 
-for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/newrelease_info.json ); do
-     value=$(jq -r ".buildInfo.properties.$k" /tmp/newrelease_info.json );
+for k in $(jq '.buildInfo.properties | keys | .[]' /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_60.json); do
+     value=$(jq -r ".buildInfo.properties.$k" /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_60.json );
      CANARYDEPENDENCY[$k]=$value
 done
 
 
-for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/baseline_info.json ); do
-    value=$(jq -r ".buildInfo.properties.$k" /tmp/baseline_info.json );
+for k in $(jq '.buildInfo.properties | keys | .[]' /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_59.json ); do
+    value=$(jq -r ".buildInfo.properties.$k" /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_59.json );
     BASEDEPENDENCY[$k]=$value
 done
 
@@ -407,19 +407,21 @@ for k in "${!components_list[@]}"; do
 	fi
 done
 
+echo $components_regex
+
 for j in "${!CANARYDEPENDENCY[@]}"; do
     BASE_VALUE=${BASEDEPENDENCY[$j]};
     if [[ $j == *'Version"' ]]; then
        if [ ! -z "${CANARYDEPENDENCY[$j]}" ] && [ ! -z "$BASE_VALUE" ]; then
           if [ ${CANARYDEPENDENCY[$j]} != $BASE_VALUE ]; then
-             CANARY_VERSION_COMPARE+=$j="<p style=\"background-color:yellow;display:inline\">${CANARYDEPENDENCY[$j]} </p>,";
-             BASE_VERSION_COMPARE+=$j="<p style=\"display:inline\">$BASE_VALUE </p>,";
+             CANARY_VERSION_COMPARE+=$j="<p style=\"background-color:yellow;display:inline\">${CANARYDEPENDENCY[$j]} </p>, <br>";
+             BASE_VERSION_COMPARE+=$j="<p style=\"display:inline\">$BASE_VALUE </p>, <br>";
           else
-             CANARY_VERSION_COMPARE+="<p style=\"display:inline\">$j=${CANARYDEPENDENCY[$j]} </p>,";
-             BASE_VERSION_COMPARE+="<p style=\"display:inline\">$j=$BASE_VALUE </p>,";
+             CANARY_VERSION_COMPARE+="<p style=\"display:inline\">$j=${CANARYDEPENDENCY[$j]} </p>, <br>";
+             BASE_VERSION_COMPARE+="<p style=\"display:inline\">$j=$BASE_VALUE </p>, <br>";
           fi      
        elif [ ! -z "${CANARYDEPENDENCY[$j]}" ] && [ -z "$BASE_VALUE" ]; then
-           CANARY_VERSION_COMPARE+="<p style=\"background-color:yellow;display:inline\">$j=${CANARYDEPENDENCY[$j]} </p>,";
+           CANARY_VERSION_COMPARE+="<p style=\"background-color:yellow;display:inline\">$j=${CANARYDEPENDENCY[$j]} </p>, <br>";
        fi
     fi
     
@@ -438,6 +440,28 @@ for j in "${!CANARYDEPENDENCY[@]}"; do
            baseline_modules_diff+=${COMMON_ALL[$i]}
         done
 
+        
+	for l in "${!canaryMultiComponents[@]}"; do
+          IFS=':' read -r key1 value1 <<< "${canaryMultiComponents[$l]}"
+          mulitiplemodule[$l]=$key1
+        done
+        
+        declare -A seen;
+	HASDUPMODULE=false;
+        
+        for i in "${mulitiplemodule[@]}"; do
+            # If element of arr is not in seen, add it as a key to seen
+            if [ -z "${seen[$i]}" ]; then
+                seen[$i]=1
+            else
+                HASDUPMODULE=true;
+                break
+            fi
+        done
+
+        mulitiplemodule=();
+	unset seen;
+
         if [ ${#canary_diff[@]} -gt 0 ] || [ ${#baseline_diff[@]} -gt 0 ]; then
            for i in "${!canary_diff[@]}"; do
                canary_modules_diff+="<p style=\"background-color:yellow;display:inline\">${canary_diff[$i]}</p>,"
@@ -446,9 +470,12 @@ for j in "${!CANARYDEPENDENCY[@]}"; do
                baseline_modules_diff+="<p style=\"display:inline\">${baseline_diff[$i]}</p>,"
            done
            
-
-           BASE_CHANGED_MODULES+="$j= $baseline_modules_diff"
-           CANARY_CHNAGED_MODULES+="$j= $canary_modules_diff"
+           if [ "$HASDUPMODULE" = true ] ; then
+               CANARY_CHNAGED_MODULES+="<p style=\"background-color:#eca7a7;display:inline\">$j</p>= $canary_modules_diff <br>"
+           else
+	       CANARY_CHNAGED_MODULES+="$j= $canary_modules_diff <br>"
+           fi
+           BASE_CHANGED_MODULES+="$j= $baseline_modules_diff <br>"
 
         fi
 
@@ -461,7 +488,7 @@ for j in "${!BASEDEPENDENCY[@]}"; do
     CANARY_VALUE=${CANARYDEPENDENCY[$j]};
     if [[ $j == *'Version"' ]]; then      
        if [ ! -z "${BASEDEPENDENCY[$j]}" ] && [ -z "$CANARY_VALUE" ]; then
-           BASE_VERSION_COMPARE+="<p style=\"background-color:yellow;display:inline\">$j=${BASEDEPENDENCY[$j]} </p>,";
+           BASE_VERSION_COMPARE+="<p style=\"background-color:yellow;display:inline\">$j=${BASEDEPENDENCY[$j]} </p>, <br>";
        fi
     fi
 
@@ -479,16 +506,16 @@ for j in "${!BASEDEPENDENCY[@]}"; do
                baseline_modules_diff+="<p style=\"background-color:yellow;display:inline\">${baseline_diff[$i]}</p>,"
            done
 
-           BASE_CHANGED_MODULES+="$j= $baseline_modules_diff"
+           BASE_CHANGED_MODULES+="$j= $baseline_modules_diff <br>"
         fi
         baseline_modules_diff='';
     fi
 done
 
-  BASE_CHANGED_MODULES=${BASE_CHANGED_MODULES:0:-1};
-  CANARY_CHNAGED_MODULES=${CANARY_CHNAGED_MODULES:0:-1};
-  BASE_VERSION_COMPARE=${BASE_VERSION_COMPARE:0:-1};
-  CANARY_VERSION_COMPARE=${CANARY_VERSION_COMPARE:0:-1};
+  BASE_CHANGED_MODULES=${BASE_CHANGED_MODULES:0:-7};
+  CANARY_CHNAGED_MODULES=${CANARY_CHNAGED_MODULES:0:-7};
+  BASE_VERSION_COMPARE=${BASE_VERSION_COMPARE:0:-7};
+  CANARY_VERSION_COMPARE=${CANARY_VERSION_COMPARE:0:-7};
 
 COMPONENT_CHANGED+="<tr class=\"skippedodd\">
                       <td>$BASE_VERSION_COMPARE</td>
