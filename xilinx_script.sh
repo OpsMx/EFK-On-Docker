@@ -388,14 +388,14 @@ curl -k $ARTIFACTORY_URL/$CANARY_JOB_ID > /tmp/newrelease_info.json
 curl -k $ARTIFACTORY_URL/$BASE_JOB_ID > /tmp/baseline_info.json
 
 
-for k in $(jq '.buildInfo.properties | keys | .[]' /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_60.json); do
-     value=$(jq -r ".buildInfo.properties.$k" /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_60.json );
+for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/newrelease_info.json); do
+     value=$(jq -r ".buildInfo.properties.$k" /tmp/newrelease_info.json );
      CANARYDEPENDENCY[$k]=$value
 done
 
 
-for k in $(jq '.buildInfo.properties | keys | .[]' /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_59.json ); do
-    value=$(jq -r ".buildInfo.properties.$k" /home/luthan/Downloads/xilinx/buildinfo/spinnaker_sw_build_59.json );
+for k in $(jq '.buildInfo.properties | keys | .[]' /tmp/baseline_info.json ); do
+    value=$(jq -r ".buildInfo.properties.$k" /tmp/baseline_info.json );
     BASEDEPENDENCY[$k]=$value
 done
 
