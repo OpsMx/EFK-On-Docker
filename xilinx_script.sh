@@ -29,14 +29,15 @@ usage="$(basename "$0") [-help]
 -- Example to show how to pass relevant arguments.
 
 USAGE:
-$(basename "$0") -basejobid=100 -canaryjobid=221  -testcases=20 -basestart=1608196811570 -canarystart=1608198772262;
+$(basename "$0") -basejobid=100 -canaryjobid=221  -testcases=20 -basestart=1608196811570 -canarystart=1608198772262 -autopilot_enabled=false;
 
 args:
   -basejobid=<baseline job id>
   -canaryjobid=<New Release job id>
   -basestart=<Baseline job start time in Epoch format>
   -canarystart=<Canary job start time in Epoch format>
-  -testcases=<Maximum number of test cases. '0' means all>"
+  -testcases=<Maximum number of test cases. '0' means all>
+  -autopilot_enabled=<Trigger autopilot analysis, by default true>"
 
 
 for i in "$@"
@@ -62,6 +63,10 @@ case $i in
     TRIGGER_COUNT="${i#*=}"
     shift # past argument=value
     ;;
+    -autopilot_enabled=*)
+    AUTOPILOT_ENABLED="${i#*=}"
+    shift # past argument=value
+    ;;
     *)
      echo "$usage";
      exit 1
@@ -69,6 +74,7 @@ case $i in
 esac
 done
 
+AUTOPILOT_ENABLED="${AUTOPILOT_ENABLED:-true}"
 
 if [[ -z "$BASE_JOB_ID" ]]; then
   echo "Provide Baseline Job Id";
